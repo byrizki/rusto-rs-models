@@ -1,0 +1,97 @@
+name: Publish Models Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version tag (e.g. v1.1.0)'
+        required: true
+        default: 'v1.1.0'
+      tiers:
+        description: 'PP-OCRv6 tiers to publish (comma-separated: tiny,small,medium)'
+        required: false
+        default: 'tiny,small,medium'
+      include_v4_v5:
+        description: 'Include PP-OCRv4 and PP-OCRv5 mobile models'
+        type: boolean
+        required: false
+        default: true
+
+jobs:
+  publish:
+    name: Download & Publish Models
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download PP-OCRv6 models from ModelScope
+        run: |
+          mkdir -p models
+          TIERS="${{ github.event.inputs.tiers }}"
+          IFS=',' read -ra TIER_LIST <<< "$TIERS"
+          BASE="https://www.modelscope.cn/api/v1/models/RapidAI/RapidOCR/repo?Revision=master&FilePath="
+
+          for TIER in "${TIER_LIST[@]}"; do
+            TIER=$(echo "$TIER" | tr -d ' ')
+            echo "=== PP-OCRv6 $TIER tier ==="
+            curl -L -f -o "models/ppocrv6_det_${TIER}.mnn" "${BASE}mnn%2FPP-OCRv6%2Fdet%2FPP-OCRv6_det_${TIER}.mnn"
+            curl -L -f -o "models/ppocrv6_rec_${TIER}.mnn" "${BASE}mnn%2FPP-OCRv6%2Frec%2FPP-OCRv6_rec_${TIER}.mnn"
+          done
+
+          curl -L -f -o "models/ppocrv6_tiny_dict.txt" \
+            "${BASE}paddle%2FPP-OCRv6%2Frec%2FPP-OCRv6_rec_tiny%2Fppocrv6_tiny_dict.txt"
+          curl -L -f -o "models/ppocrv6_dict.txt" \
+            "${BASE}paddle%2FPP-OCRv6%2Frec%2FPP-OCRv6_rec_small%2Fppocrv6_dict.txt"
+
+      - name: Download PP-OCRv5 models from ModelScope
+        if: ${{ github.event.inputs.include_v4_v5 == 'true' }}
+        run: |
+          BASE="https://www.modelscope.cn/api/v1/models/RapidAI/RapidOCR/repo?Revision=master&FilePath="
+          echo "=== PP-OCRv5 mobile models ==="
+          curl -L -f -o "models/ppocrv5_det_mobile.mnn"     "${BASE}mnn%2FPP-OCRv5%2Fdet%2Fch_PP-OCRv5_det_mobile.mnn"
+          curl -L -f -o "models/ppocrv5_rec_ch_mobile.mnn"  "${BASE}mnn%2FPP-OCRv5%2Frec%2Fch_PP-OCRv5_rec_mobile.mnn"
+          curl -L -f -o "models/ppocrv5_rec_en_mobile.mnn"  "${BASE}mnn%2FPP-OCRv5%2Frec%2Fen_PP-OCRv5_rec_mobile.mnn"
+          curl -L -f -o "models/ppocrv5_ch_dict.txt"        "${BASE}paddle%2FPP-OCRv5%2Frec%2Fch_PP-OCRv5_rec_mobile%2Fppocrv5_dict.txt"
+          curl -L -f -o "models/ppocrv5_en_dict.txt"        "${BASE}paddle%2FPP-OCRv5%2Frec%2Fen_PP-OCRv5_rec_mobile%2Fppocrv5_en_dict.txt"
+
+      - name: Download PP-OCRv4 models from ModelScope
+        if: ${{ github.event.inputs.include_v4_v5 == 'true' }}
+        run: |
+          BASE="https://www.modelscope.cn/api/v1/models/RapidAI/RapidOCR/repo?Revision=master&FilePath="
+          echo "=== PP-OCRv4 mobile models ==="
+          curl -L -f -o "models/ppocrv4_det_mobile.mnn"     "${BASE}mnn%2FPP-OCRv4%2Fdet%2Fch_PP-OCRv4_det_mobile.mnn"
+          curl -L -f -o "models/ppocrv4_rec_ch_mobile.mnn"  "${BASE}mnn%2FPP-OCRv4%2Frec%2Fch_PP-OCRv4_rec_mobile.mnn"
+          curl -L -f -o "models/ppocrv4_rec_en_mobile.mnn"  "${BASE}mnn%2FPP-OCRv4%2Frec%2Fen_PP-OCRv4_rec_mobile.mnn"
+          curl -L -f -o "models/ppocrv4_cls_mobile.mnn"     "${BASE}mnn%2FPP-OCRv4%2Fcls%2Fch_ppocr_mobile_v2.0_cls_mobile.mnn"
+          curl -L -f -o "models/ppocrv4_ch_dict.txt"        "${BASE}paddle%2FPP-OCRv4%2Frec%2Fch_PP-OCRv4_rec_mobile%2Fppocr_keys_v1.txt"
+          curl -L -f -o "models/ppocrv4_en_dict.txt"        "${BASE}paddle%2FPP-OCRv4%2Frec%2Fen_PP-OCRv4_rec_mobile%2Fen_dict.txt"
+
+      - name: Generate checksums
+        run: |
+          cd models
+          sha256sum * > SHA256SUMS
+          echo "=== Files ready ==="
+          ls -lh
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.version }}
+          name: RustO! Models ${{ github.event.inputs.version }}
+          draft: false
+          prerelease: false
+          body: |
+            ## RustO! OCR Models — ${{ github.event.inputs.version }}
+
+            Pre-converted MNN model files for [rusto-rs](https://github.com/byrizki/rusto-rs).
+
+            ### Quick Download (default PP-OCRv6 tiny)
+            ```bash
+            bash <(curl -sSL https://raw.githubusercontent.com/byrizki/rusto-rs/main/scripts/download_models.sh)
+            ```
+
+            See [README](https://github.com/byrizki/rusto-rs-models#readme) for full model listing.
+          files: models/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
